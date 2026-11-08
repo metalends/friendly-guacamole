@@ -1,0 +1,9 @@
+version: 2
+updates:
+
+  # Dockerfiles
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "daily"
+
