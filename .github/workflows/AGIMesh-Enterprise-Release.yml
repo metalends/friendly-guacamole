@@ -1,0 +1,162 @@
+name: AGIMesh Enterprise Release
+
+on:
+  push:
+    branches:
+      - main
+      - release/*
+
+  pull_request:
+    branches:
+      - main
+      - release/*
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+
+  build:
+
+    name: Build AGIMesh
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 40
+
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+
+      ####################################################
+      # CHECKOUT
+      ####################################################
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      ####################################################
+      # VERSION
+      ####################################################
+
+      - name: Generate Version
+        id: version
+        run: |
+          VERSION="v$(date +'%Y.%m.%d').${GITHUB_RUN_NUMBER}"
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+
+      ####################################################
+      # DIAGNOSTICS
+      ####################################################
+
+      - name: Show .NET Info
+        run: dotnet --info
+
+      - name: List SDKs
+        run: dotnet --list-sdks
+
+      - name: Show NuGet Sources
+        run: dotnet nuget list source
+
+      ####################################################
+      # .NET / Q#
+      ####################################################
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: |
+          dotnet restore AGIMesh/AGIMesh.csproj
+
+      - name: Build
+        run: |
+          dotnet build \
+            AGIMesh/AGIMesh.csproj \
+            -c Release \
+            --no-restore
+
+      - name: Test
+        continue-on-error: false
+        run: |
+          dotnet test \
+            AGIMesh/AGIMesh.csproj \
+            -c Release
+
+      ####################################################
+      # NODE OPCIONAL
+      ####################################################
+
+      - name: Setup Node
+        if: hashFiles('package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Cache Node Modules
+        if: hashFiles('package-lock.json') != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            **/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+
+      - name: Install NPM Packages
+        if: hashFiles('package.json') != ''
+        run: npm ci
+
+      - name: Lint
+        if: hashFiles('package.json') != ''
+        run: npm run lint --if-present
+
+      - name: Frontend Tests
+        if: hashFiles('package.json') != ''
+        run: npm test --if-present
+
+      ####################################################
+      # PUBLISH
+      ####################################################
+
+      - name: Publish
+        run: |
+          dotnet publish \
+            AGIMesh/AGIMesh.csproj \
+            -c Release \
+            -o publish
+
+      ####################################################
+      # BUILD METADATA
+      ####################################################
+
+      - name: Generate Build Metadata
+        run: |
+
+          mkdir -p publish/metadata
+
+          cat > publish/metadata/build-info.txt << EOF
+          Repository=${GITHUB_REPOSITORY}
+          Commit=${GITHUB_SHA}
+          Ref=${GITHUB_REF}
+          RunNumber=${GITHUB_RUN_NUMBER}
+          RunId=${GITHUB_RUN_ID}
+          Actor=${GITHUB_ACTOR}
+          Workflow=${GITHUB_WORKFLOW}
+          Runner=${RUNNER_OS}
+          BuildDateUTC=$(date -u +"%Y-%m-%dT
